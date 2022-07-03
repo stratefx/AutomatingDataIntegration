@@ -1,0 +1,149 @@
+-- This section is used for video demonstration
+SELECT * FROM contest_details;
+SELECT * FROM contest_summary;
+SELECT * FROM temporary_table;
+
+DROP TABLE contest_details;
+DROP TABLE contest_summary;
+DROP TABLE temporary_table;
+
+TRUNCATE TABLE contest_details;
+TRUNCATE TABLE contest_summary;
+TRUNCATE TABLE temporary_table;
+
+DROP FUNCTION extract_month;
+DROP PROCEDURE refresh_data;
+DROP TRIGGER refresh_trigger
+ON contest_details
+
+
+
+-- PART B - Write a SQL code that creates the tables to hold your report sections
+CREATE TABLE IF NOT EXISTS contest_details(
+	customer_id integer NOT NULL,
+	amount numeric(10,2) NOT NULL,
+	payment_date timestamp NOT NULL,
+	first_name varchar(45) NOT NULL,
+	last_name varchar(45) NOT NULL,
+	email varchar(50) NOT NULL,
+	month_of_payment integer DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS contest_summary(
+	first_name varchar(45) NOT NULL,
+	last_name varchar(45) NOT NULL,
+	email varchar(50) NOT NULL,
+	month_of_payment integer,
+	amount numeric(10,2)
+);
+
+CREATE TABLE IF NOT EXISTS temporary_table(
+	first_name varchar(45) NOT NULL,
+	last_name varchar(45) NOT NULL,
+	email varchar(50) NOT NULL,
+	month_of_payment integer,
+	amount numeric(10,2)
+);
+
+
+
+-- Part C - Write a SQL query that will extract the raw data needed for the DETAILED section of your report
+-- from the source database and verify the data's accuracy
+INSERT INTO contest_details
+	SELECT payment.customer_id, amount, payment_date, first_name, last_name, email
+	FROM payment
+	JOIN customer
+	ON payment.customer_id = customer.customer_id
+	WHERE EXTRACT(month from payment_date) = EXTRACT(month FROM current_date);
+
+
+INSERT INTO temporary_table
+	SELECT first_name, last_name, email, month_of_payment, SUM(amount) as total
+	FROM contest_details
+		GROUP BY first_name, last_name, month_of_payment
+		ORDER BY total DESC;
+
+INSERT INTO contest_summary
+	SELECT * FROM temporary_table WHERE amount = (SELECT MAX(amount) FROM temporary_table);
+
+
+-- This section is used for video demonstration
+SELECT * FROM contest_details;
+SELECT * FROM contest_summary;
+
+
+
+-- Part D - Write code for function that performs the transformation in part A$
+CREATE OR REPLACE FUNCTION extract_month()
+	RETURNS int
+	LANGUAGE plpgsql
+AS
+$$
+DECLARE months int;
+BEGIN
+	UPDATE contest_details
+	SET month_of_payment = (SELECT EXTRACT(month FROM payment_date));
+
+	RETURN months;
+END;
+$$
+
+-- This section is used for video demonstration
+SELECT extract_month();
+SELECT * FROM contest_details;
+
+
+
+-- Part F - Create a stored procedure that can be used to refresh the data in both your detailed and
+-- summary tables
+-- *** This procedure should be executed one time on the final day of each month, after business hours
+CREATE OR REPLACE PROCEDURE refresh_data()
+LANGUAGE plpgsql
+AS
+$$
+BEGIN
+	TRUNCATE TABLE contest_summary;
+	TRUNCATE TABLE temporary_table;
+	TRUNCATEE TABLE contest_details;
+
+	INSERT INTO contest_details
+		SELECT payment.customer_id, amount, payment_date, first_name, last_name, email
+		FROM payment
+		JOIN customer
+		ON payment.customer_id = customer.customer_id
+		WHERE EXTRACT(month FROM payment_date) = EXTRACT(month FROM current_date);
+
+	INSERT INTO temporary_table
+		SELECT first_name, last_name, email, month_of_payment, SUM(amount) as total
+		FROM contest_details
+		GROUP BY first_name, last_name, email, month_of_payment
+		ORDER BY total DESC;
+
+	INSERT INTO contest_summary
+		SELECT * FROM temporary_table WHERE amount = (SELECT MAX(amount) FROM temporary_table);
+
+END;
+$$
+
+
+
+CREATE OR REPLACE FUNCTION trigger_refresh_function()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS
+$$
+BEGIN
+	CALL refresh_data();
+	RETURN NEW;
+END;
+$$
+
+
+
+-- Part E - Write a SQL code that creates a trigger on the details table of the report that will
+-- continually update the summary table as data is added to the detailed report
+CREATE TRIGGER refresh_trigger
+	AFTER INSERT OR DELETE
+	ON contest_details
+	FOR EACH STATEMENT
+		EXECUTE PROCEDURE trigger_refresh_function();
